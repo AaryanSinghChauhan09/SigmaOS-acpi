@@ -1,23 +1,19 @@
 // ACPI (Advanced Configuration and Power Interface) Support
 // Inspired by Linux ACPI implementation and UEFI firmware specifications
 
-#![no_std]
-
 extern crate alloc;
-use alloc::collections::BTreeMap;
-use alloc::string::String;
+use alloc::string::{String, ToString};
 use alloc::vec::Vec;
-use core::mem::size_of;
 
 // ACPI Root System Description Table (RSDP) signature and pointers
-const ACPI_SIG_RSDP: &[u8; 4] = b"RSD ";
-const ACPI_SIG_XSDP: &[u8; 4] = b"XSDT";
-const ACPI_SIG_FACP: &[u8; 4] = b"FACP";
+const ACPI_SIG_RSDP: &[u8; 8] = b"RSD PTR ";
+const ACPI_SIG_XSDT: &[u8; 4] = b"XSDT";
+const ACPI_SIG_RSDT: &[u8; 4] = b"RSDT";
 const ACPI_SIG_DSDT: &[u8; 4] = b"DSDT";
-const ACPI_SIG_APIC: &[u8; 4] = b"APIC";
-const ACPI_SIG_SMBIOS: &[u8; 4] = b"SMBI";
-const ACPI_SIG_SMBIOS_3: &[u8; 4] = b"S3DM";
-const ACPI_SIG_SMCI: &[u8; 4] = b"SMCI";
+
+fn checksum_is_valid(data: &[u8]) -> bool {
+    data.iter().fold(0u8, |sum, byte| sum.wrapping_add(*byte)) == 0
+}
 
 // ACPI table header
 #[derive(Debug, Clone)]
@@ -29,8 +25,8 @@ pub struct AcpiHeader {
     pub oem_id: [u8; 6],
     pub oem_table_id: [u8; 8],
     pub oem_revision: u32,
-    creator_id: u32,
-    creator_revision: u32,
+    pub creator_id: u32,
+    pub creator_revision: u32,
 }
 
 impl AcpiHeader {
@@ -38,24 +34,27 @@ impl AcpiHeader {
         if data.len() < 36 {
             return Err("ACPI header too small".to_string());
         }
-        
+
         Ok(AcpiHeader {
             signature: [data[0], data[1], data[2], data[3]],
-            length: u32::from_be_bytes([data[4], data[5], data[6], data[7]]),
+            length: u32::from_le_bytes([data[4], data[5], data[6], data[7]]),
             revision: data[8],
             checksum: data[9],
             oem_id: [data[10], data[11], data[12], data[13], data[14], data[15]],
-            oem_table_id: [data[16], data[17], data[18], data[19], data[20], data[21], data[22], data[23]],
-            oem_revision: u32::from_be_bytes([data[24], data[25], data[26], data[28]]),
-            creator_id: u32::from_be_bytes([data[28], data[29], data[30], data[31]]),
-            creator_revision: u32::from_be_bytes([data[32], data[33], data[34], data[35]]),
+            oem_table_id: [
+                data[16], data[17], data[18], data[19], data[20], data[21], data[22], data[23],
+            ],
+            oem_revision: u32::from_le_bytes([data[24], data[25], data[26], data[27]]),
+            creator_id: u32::from_le_bytes([data[28], data[29], data[30], data[31]]),
+            creator_revision: u32::from_le_bytes([data[32], data[33], data[34], data[35]]),
         })
     }
-    
-    pub fn checksum_valid(&self) -> bool {
-        let data: &[u8] = unsafe { core::slice::from_raw_parts(self as *const _ as *const u8, self.length as usize) };
-        let sum: u8 = data.iter().sum();
-        sum == 0
+
+    /// Validate the checksum over the original table bytes without reading
+    /// beyond the caller-provided slice or the parsed header's bounds.
+    pub fn checksum_valid(&self, data: &[u8]) -> bool {
+        let length = self.length as usize;
+        length >= 36 && length <= data.len() && checksum_is_valid(&data[..length])
     }
 }
 
@@ -63,14 +62,15 @@ impl AcpiHeader {
 #[derive(Debug, Clone)]
 pub struct Rsdp {
     pub address: u64,
-    pub signature: [u8; 4],
+    pub signature: [u8; 8],
     pub checksum: u8,
-    pub oem_id: [u8; 8],
+    pub oem_id: [u8; 6],
     pub revision: u8,
     pub rsdt_address: u32,
-    pub length: u8,
+    pub length: u32,
     pub xsdt_address: u64,
     pub extended_checksum: u8,
+    pub reserved: [u8; 3],
 }
 
 impl Rsdp {
@@ -79,27 +79,57 @@ impl Rsdp {
         // This is a simplified implementation
         None
     }
-    
+
     pub fn parse(data: &[u8]) -> Option<Self> {
         if data.len() < 20 {
             return None;
         }
-        
-        let signature = [data[0], data[1], data[2], data[3]];
-        if signature != b"RSD " && signature != b"RSD " {
+
+        let signature: [u8; 8] = data.get(..8)?.try_into().ok()?;
+        if &signature != ACPI_SIG_RSDP || !checksum_is_valid(&data[..20]) {
             return None;
         }
-        
+
+        let revision = data[15];
+        let rsdt_address = u32::from_le_bytes(data[16..20].try_into().ok()?);
+        if revision == 0 {
+            return Some(Rsdp {
+                address: 0,
+                signature,
+                checksum: data[8],
+                oem_id: data[9..15].try_into().ok()?,
+                revision,
+                rsdt_address,
+                length: 20,
+                xsdt_address: 0,
+                extended_checksum: 0,
+                reserved: [0; 3],
+            });
+        }
+
+        if revision < 2 || data.len() < 36 {
+            return None;
+        }
+        let length = u32::from_le_bytes(data[20..24].try_into().ok()?);
+        let length_usize = usize::try_from(length).ok()?;
+        if length_usize < 36 || length_usize > data.len() {
+            return None;
+        }
+        if !checksum_is_valid(&data[..length_usize]) {
+            return None;
+        }
+
         Some(Rsdp {
-            address: u64::from_be_bytes([data[6], data[7], data[8], data[9], data[10], data[11], data[12], data[13]]),
+            address: 0,
             signature,
-            checksum: data[13],
-            oem_id: [data[14], data[15], data[16], data[17], data[18], data[19], data[20], data[21]],
-            revision: data[22],
-            rsdt_address: u32::from_be_bytes([data[23], data[24], data[25], data[26]]),
-            length: data[27],
-            xsdt_address: u64::from_be_bytes([data[30], data[31], data[32], data[33], data[34], data[35], data[36], data[37]]),
-            extended_checksum: data[38],
+            checksum: data[8],
+            oem_id: data[9..15].try_into().ok()?,
+            revision,
+            rsdt_address,
+            length,
+            xsdt_address: u64::from_le_bytes(data[24..32].try_into().ok()?),
+            extended_checksum: data[32],
+            reserved: data[33..36].try_into().ok()?,
         })
     }
 }
@@ -114,40 +144,36 @@ pub struct Rsdt {
 
 impl Rsdt {
     pub fn new(address: u32, entries: Vec<u32>) -> Self {
-        Rsd {
+        Rsdt {
             address,
             entry_count: entries.len() as u32,
             entries,
         }
     }
-    
+
     pub fn parse(data: &[u8]) -> Option<Self> {
-        if data.len() < 12 {
+        if data.len() < 36 {
             return None;
         }
-        
-        let signature = [data[0], data[1], data[2], data[3]];
-        if signature != b"ROOT" && signature != b"RSDT" {
+
+        if &data[..4] != ACPI_SIG_RSDT {
             return None;
         }
-        
-        let length = u32::from_be_bytes([data[4], data[5], data[6], data[6+1]]);
-        let entry_count = (length - 36) / 4;
-        
-        let mut entries = Vec::new();
-        for i in 0..entry_count {
-            let entry = u32::from_be_bytes([
-                data[36 + i * 4],
-                data[36 + i * 4 + 1],
-                data[36 + i * 4 + 2],
-                data[36 + i * 4 + 3],
-            ]);
-            entries.push(entry);
+        let length = u32::from_le_bytes(data[4..8].try_into().ok()?) as usize;
+        if length < 36 || length > data.len() || (length - 36) % 4 != 0 {
+            return None;
         }
-        
+        if !checksum_is_valid(&data[..length]) {
+            return None;
+        }
+        let entries: Vec<u32> = data[36..length]
+            .chunks_exact(4)
+            .map(|entry| u32::from_le_bytes(entry.try_into().expect("four-byte entry")))
+            .collect();
+
         Some(Rsdt {
-            address: u32::from_be_bytes([data[0], data[1], data[2], data[3]]),
-            entry_count,
+            address: 0,
+            entry_count: entries.len() as u32,
             entries,
         })
     }
@@ -163,36 +189,28 @@ pub struct Xsdt {
 
 impl Xsdt {
     pub fn parse(data: &[u8]) -> Option<Self> {
-        if data.len() < 24 {
+        if data.len() < 36 {
             return None;
         }
-        
-        let signature = [data[0], data[1], data[2], data[3]];
-        if signature != b"XSDT" {
+
+        if &data[..4] != ACPI_SIG_XSDT {
             return None;
         }
-        
-        let length = u64::from_be_bytes([data[20], data[21], data[21+1], data[21+2]]);
-        let entry_count = (length - 40) / 8;
-        
-        let mut entries = Vec::new();
-        for i in 0..entry_count {
-            let entry = u64::from_be_bytes([
-                data[40 + i * 8],
-                data[40 + i * 8 + 1],
-                data[40 + i * 8 + 2],
-                data[40 + i * 8 + 3],
-                data[40 + i * 8 + 4],
-                data[40 + i * 8 + 5],
-                data[40 + i * 8 + 6],
-                data[40 + i * 8 + 7],
-            ]);
-            entries.push(entry);
+        let length = u32::from_le_bytes(data[4..8].try_into().ok()?) as usize;
+        if length < 36 || length > data.len() || (length - 36) % 8 != 0 {
+            return None;
         }
-        
+        if !checksum_is_valid(&data[..length]) {
+            return None;
+        }
+        let entries: Vec<u64> = data[36..length]
+            .chunks_exact(8)
+            .map(|entry| u64::from_le_bytes(entry.try_into().expect("eight-byte entry")))
+            .collect();
+
         Some(Xsdt {
-            address: u64::from_be_bytes([data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7]]),
-            entry_count,
+            address: 0,
+            entry_count: entries.len() as u64,
             entries,
         })
     }
@@ -212,7 +230,6 @@ pub struct Facp {
     pub pm1_control_block_size: u8,
     pub pcm_control_block: AcpiPmControlBlock,
     pub pm1_control_block_size_2: u8,
-    pub pm2_control_block: u32,
     pub pcm2_control_block: u32,
     pub pm1_event_block: u32,
     pub pm1_control_block: u32,
@@ -221,7 +238,6 @@ pub struct Facp {
     pub gpe0_block: AcpiGpeBlock,
     pub gpe1_block: AcpiGpeBlock,
     pub pm1_event_block_size: u8,
-    pub pm1_control_block_size: u8,
     pub pm2_control_block_size: u8,
     pub pcm_control_block_size: u8,
     pub power_manager1: u32,
@@ -269,30 +285,29 @@ pub struct Dsdt {
 
 impl Dsdt {
     pub fn new(address: u64, table: Vec<u8>) -> Self {
-        Dsdt {
-            address,
-            table,
-        }
+        Dsdt { address, table }
     }
-    
+
     pub fn parse(data: &[u8]) -> Option<Self> {
         if data.len() < 4 {
             return None;
         }
-        
+
         let signature = [data[0], data[1], data[2], data[3]];
-        if signature != b"DSDT" {
+        if &signature != ACPI_SIG_DSDT {
             return None;
         }
-        
-        let length = u32::from_be_bytes([data[4], data[5], data[6], data[7]]) as usize;
-        
-        if data.len() < length {
+
+        if data.len() < 36 {
             return None;
         }
-        
+        let length = u32::from_le_bytes(data[4..8].try_into().ok()?) as usize;
+        if length < 36 || data.len() < length {
+            return None;
+        }
+
         Some(Dsdt {
-            address: 0,  // Will be filled in by caller
+            address: 0, // Will be filled in by caller
             table: data[..length].to_vec(),
         })
     }
@@ -373,6 +388,8 @@ impl core::fmt::Display for AcpiDeviceType {
             AcpiDeviceType::PciBridge => write!(f, "PCI Bridge"),
             AcpiDeviceType::PciDevice => write!(f, "PCI Device"),
             AcpiDeviceType::EmbeddedController => write!(f, "Embedded Controller"),
+            AcpiDeviceType::SofTpowerButton => write!(f, "Soft Power Button"),
+            AcpiDeviceType::PciXDevice => write!(f, "PCI-X Device"),
             AcpiDeviceType::ThermalZone => write!(f, "Thermal Zone"),
         }
     }
@@ -396,106 +413,30 @@ pub struct AcpiUtility;
 
 impl AcpiUtility {
     /// Parse RSDP from memory range
-    pub fn find_rsdp(start: u64, end: u64) -> Option<Rsdp> {
+    pub fn find_rsdp(_start: u64, _end: u64) -> Option<Rsdp> {
         // Search for RSDP signature in memory range
         None
     }
-    
+
     /// Parse DSDT table
     pub fn parse_dsdt(data: &[u8]) -> Option<Dsdt> {
         Dsdt::parse(data)
     }
-    
-    /// Parse FACP table
-    pub fn parse_facp(data: &[u8]) -> Option<Facp> {
-        if data.len() < std::mem::size_of::<Facp>() {
-            return None;
-        }
-        
-        let header = AcpiHeader::new(data).ok()?;
-        if !header.checksum_valid() {
-            return None;
-        }
-        
-        // Parse FACP based on header length
-        let facp_len = header.length as usize;
-        if data.len() < facp_len {
-            return None;
-        }
-        
-        // Simplified FACP parsing
-        Some(Facp {
-            header,
-            description: [0u8; 20],
-            firmware_ctrl: 0,
-            dsdt: 0,
-            preferred_pm_1a: 0,
-            preferred_pm_1b: 0,
-            pm1a_control_block: AcpiPmControlBlock {
-                address: 0,
-                status: 0,
-                command: 0,
-            },
-            pm1b_control_block: AcpiPmControlBlock {
-                address: 0,
-                status: 0,
-                command: 0,
-            },
-            pm1_control_block_size: 0,
-            pcm_control_block: AcpiPmControlBlock {
-                address: 0,
-                status: 0,
-                command: 0,
-            },
-            pm1_control_block_size_2: 0,
-            pm2_control_block: 0,
-            pcm2_control_block: 0,
-            pm1_event_block: 0,
-            pm1_control_block: 0,
-            pm2_event_block: 0,
-            pm2_control_block: 0,
-            pm1_event_block_size: 0,
-            pm1_control_block_size: 0,
-            pm2_control_block_size: 0,
-            pcm_control_block_size: 0,
-            power_manager1: 0,
-            power_manager1_control: 0,
-            sleep_control1: 0,
-            sleep_status1: 0,
-            sleep_control2: 0,
-            sleep_status2: 0,
-            p_lvl2_latency: 0,
-            p_lvl3_latency: 0,
-            flush_size: 0,
-            flush_stride: 0,
-            duty_offset: 0,
-            duty_width: 0,
-            day_alarm: 0,
-            month_alarm: 0,
-            century: 0,
-            iapc_boot_architecture_protection: 0,
-            reserved: 0,
-            flags: 0,
-        })
+
+    /// Parse FACP table.
+    ///
+    /// Field decoding is not implemented, so this returns `None` rather than
+    /// presenting zero-filled fields as parsed firmware data.
+    pub fn parse_facp(_data: &[u8]) -> Option<Facp> {
+        None
     }
-    
-    /// Extract DSDT from RSDT/XSDT
-    pub fn extract_dsdt(rsdt: &Rsdt, xsdt: &Xsdt) -> Option<Dsdt> {
-        // Find the DSDT table entry in RSDT/XSDT
-        let entries = if xsdt.address > 0 {
-            // Use XSDT (64-bit addresses)
-            let xsdt = Xsdt::parse(&[0u8; 0]);  // Would need actual data
-            &xsdt.entries
-        } else {
-            // Use RSDT (32-bit addresses)
-            unimplemented!()
-        };
-        
-        // Find DSDT entry (signature "DSDT")
-        for &entry in &entries {
-            // Would need to actually read the table at this address
-        }
-        
+
+    /// Extract DSDT from the root table.
+    ///
+    /// This cannot be completed from parsed root entries alone: a physical
+    /// table mapper is required to read and validate the referenced FADT and
+    /// DSDT. Until one is supplied, return `None` instead of panicking.
+    pub fn extract_dsdt(_rsdt: &Rsdt, _xsdt: &Xsdt) -> Option<Dsdt> {
         None
     }
 }
@@ -503,38 +444,39 @@ impl AcpiUtility {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_acpi_header_creation() {
         let header_data: [u8; 36] = [
-            b'E', b'X', b'S', b'T',  // signature
-            0x64, 0x00, 0x00, 0x00,  // length
-            0x01,                      // revision
-            0xAA,                      // checksum
-            b'A', b'B', b'C', b'D', b'E', b'F',  // OEM ID
-            b'M', b'E', b'T', b'a', b'B', b'I', b'S',  // OEM table ID
-            0x01, 0x00, 0x00, 0x00,  // OEM revision
-            0x5F, 0x4B, 0x4E, 0x54,  // Creator ID
-            0x01, 0x00, 0x00, 0x00,  // Creator revision
+            b'E', b'X', b'S', b'T', // signature
+            0x64, 0x00, 0x00, 0x00, // length
+            0x01, // revision
+            0xAA, // checksum
+            b'A', b'B', b'C', b'D', b'E', b'F', // OEM ID
+            b'M', b'E', b'T', b'a', b'B', b'I', b'S', // OEM table ID
+            0x01, 0x00, 0x00, 0x00, // OEM revision
+            0x5F, 0x4B, 0x4E, 0x54, // Creator ID
+            0x01, 0x00, 0x00, 0x00, // Creator revision
         ];
-        
+
         let header = AcpiHeader::new(&header_data);
         assert!(header.is_ok());
     }
-    
+
     #[test]
     fn test_dsdt_parsing() {
         // Create a minimal DSDT table
         let mut dsdt_data: Vec<u8> = vec![b'D', b'S', b'D', b'T'];
-        dsdt_data.extend_from_slice(&(40u32.to_be_bytes()));  // length = 40
-        dsdt_data.extend_from_slice(&(0u32.to_be_bytes()));  // revision = 0
-        dsdt_data.extend_from_slice(&(0u8.to_be_bytes()));  // checksum = 0
-        dsdt_data.extend_from_slice(&[b'A'; 6]);  // OEM ID
-        dsdt_data.extend_from_slice(&(8u32.to_be_bytes()));  // OEM table ID
-        dsdt_data.extend_from_slice(&(1u32.to_be_bytes()));  // OEM revision
-        dsdt_data.extend_from_slice(&(0u32.to_be_bytes()));  // Creator ID
-        dsdt_data.extend_from_slice(&(0u32.to_be_bytes()));  // Creator revision
-        
+        dsdt_data.extend_from_slice(&(40u32.to_le_bytes())); // length = 40
+        dsdt_data.push(0); // revision
+        dsdt_data.push(0); // checksum
+        dsdt_data.extend_from_slice(&[b'A'; 6]); // OEM ID
+        dsdt_data.extend_from_slice(&[b'T'; 8]); // OEM table ID
+        dsdt_data.extend_from_slice(&(1u32.to_le_bytes())); // OEM revision
+        dsdt_data.extend_from_slice(&(0u32.to_le_bytes())); // Creator ID
+        dsdt_data.extend_from_slice(&(0u32.to_le_bytes())); // Creator revision
+        dsdt_data.extend_from_slice(&[0; 4]); // AML payload
+
         let dsdt = Dsdt::parse(&dsdt_data);
         assert!(dsdt.is_some());
     }
