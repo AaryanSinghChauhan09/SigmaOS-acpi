@@ -1,0 +1,9 @@
+[component]
+name = "SigmaOS-acpi"
+description = "ACPI tables, power states, device discovery"
+version = "0.1.0"
+tier = 1
+
+[capabilities]
+contract_version = "1.0.0"
+principles = ["DRY", "KISS", "SOLID", "Arrange-Act-Assert", "Pristine-Sources", "Minimal-Kernel"]
