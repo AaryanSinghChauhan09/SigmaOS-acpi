@@ -1,17 +1,11 @@
 [package]
-name = "sigmaos-acpi"
+name = "sigmaos_acpi"
 version = "0.1.0"
 edition = "2021"
-authors = ["SigmaOS Project"]
-description = "ACPI power management"
-license = "GPL-3.0-or-later"
-repository = "https://github.com/AaryanSinghChauhan09/SigmaOS-acpi"
-readme = "README.md"
-keywords = ["acpi", "power", "management"]
-categories = ["os"]
+description = "SigmaOS ACPI model: RSDP, SDT tables, FADT, DSDT, power states, device enumeration"
+
+[lib]
+name = "sigmaos_acpi"
+path = "src/lib.rs"
 
 [dependencies]
-sigmaos-kernel = { version = "0.1", path = "../SigmaOS-kernel" }
-
-[profile.release]
-opt-level = 3
