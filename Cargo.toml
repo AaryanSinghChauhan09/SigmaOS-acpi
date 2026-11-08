@@ -2,10 +2,9 @@
 name = "sigmaos_acpi"
 version = "0.1.0"
 edition = "2021"
-description = "SigmaOS ACPI model: RSDP, SDT tables, FADT, DSDT, power states, device enumeration"
+license = "MIT"
+description = "SigmaOS acpi component inspired by Linux Mint / Omarchy / Arch Linux."
 
 [lib]
 name = "sigmaos_acpi"
 path = "src/lib.rs"
-
-[dependencies]
