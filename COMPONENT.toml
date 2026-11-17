@@ -1,6 +1,6 @@
 [component]
 name = "SigmaOS-acpi"
-description = "ACPI tables, power states, device discovery"
+description = "ACPI table parsing primitives for SigmaOS."
 version = "0.1.0"
 tier = 1
 
