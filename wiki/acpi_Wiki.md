@@ -1,63 +1,50 @@
-# SigmaOS-acpi Component Wiki
+# SigmaOS-SigmaOS-acpi Component Wiki
 
 ## Overview
-SigmaOS-acpi provides ACPI (Advanced Configuration and Power Interface) table parsing primitives for the SigmaOS operating system. It demonstrates the hardware abstraction layer for system configuration and power management, following the principles of minimal kernel design and clear abstraction.
+SigmaOS-SigmaOS-acpi provides ACPI table parsing primitives for SigmaOS. for the SigmaOS operating system. It demonstrates the subsystem and integration within the SigmaOS ecosystem, following the principles of clear abstraction and deterministic initialization.
 
 ## Principles
 - Single Responsibility
-- Minimal Kernel Philosophy
-- Fail-Fast on ACPI Table Errors
-- Deterministic ACPI Initialization
-- Clear Abstraction Over ACPI APIs
-- Composition over Inheritance for ACPI implementations
+- SigmaOS-acpi Abstraction
+- Fail-Fast on SigmaOS-acpi Initialization Errors
+- Deterministic SigmaOS-acpi Setup
+- Clear Abstraction Over SigmaOS-acpi APIs
+- Composition over Inheritance for SigmaOS-acpi extensions
 
 ## Architecture
-SigmaOS-acpi follows an ACPI parsing pattern:
-- **Table Parsing**: Provides routines to parse Differentiated System Description Table (DSDT), Multiple API Description Table (MADT), and other ACPI tables
-- **Hardware Abstraction**: Abstracts hardware-specific details from the core OS
-- **Power Management**: Handles basic power state transitions and configuration
-- **Error Handling**: Fail-fast on malformed or unsupported ACPI tables
+SigmaOS-SigmaOS-acpi follows a SigmaOS-acpi pattern:
+- **SigmaOS-acpi Core**: Provides SigmaOS-acpi support, SigmaOS-acpi management, and SigmaOS-acpi tracking
+- **Management**: Supports SigmaOS-acpi management, SigmaOS-acpi configuration, and SigmaOS-acpi lifecycle
+- **Tracking**: Supports SigmaOS-acpi status, SigmaOS-acpi tracking, and SigmaOS-acpi lifecycle
+- **Error Handling**: Fail-fast on invalid SigmaOS-acpi configurations or unsupported SigmaOS-acpi types
 
 ## API
 The component provides the following public APIs:
-- `acpi::table::parse(data)` - Parse raw ACPI table data
-- `acpi::madt::parse(data)` - Parse Multiple API Description Table
-- `acpi::find_table(signature)` - Find ACPI table by signature
-- `acpi::get_oem_table()` - Get OEM-specific ACPI tables
-- Error types for parsing failures or unsupported table versions
+-  - Manage a SigmaOS-acpi by given configuration
+-  - Register a SigmaOS-acpi by given name
+-  - Get SigmaOS-acpi status and SigmaOS-acpi availability
+-  - Track SigmaOS-acpi management and SigmaOS-acpi tracking
+- Error types for SigmaOS-acpi failure scenarios or unsupported SigmaOS-acpi types
 
 ## Test Structure (Arrange-Act-ASSERT)
 All tests follow the AAA pattern:
-1. **Arrange**: Set up test environment with specific ACPI table data
-2. **Act**: Execute the code under test (table parsing, signature lookup)
-3. **Assert**: Verify the expected ACPI parsing results
+1. **Arrange**: Set up test environment with specific SigmaOS-acpi configuration
+2. **Act**: Execute the code under test (SigmaOS-acpi init, SigmaOS-acpi management)
+3. **Assert**: Verify the expected SigmaOS-acpi results
 
 Example:
-```rust
-#[test]
-fn test_acpi_madt_parsing_aaa() {
-    // Arrange
-    let madt_data = /* valid MADT binary data */;
-    
-    // Act
-    let madt = acpi::madt::parse(&madt_data);
-    
-    // Assert
-    assert!(madt.is_ok());
-    assert!(madt.unwalk().interrupt_controllers.len() > 0);
-}
-```
+
 
 ## Development
-- Follows Rust best practices with emphasis on no_std compatibility
-- ACPI initialization is best-effort; gracefully degrades on unsupported tables
-- Comprehensive error types for all ACPI parsing failure scenarios
-- Unit tests provided for table parsing and signature detection
-- Integration tests for full ACPI initialization with real firmware tables
+- Follows Rust best practices with 
+- SigmaOS-acpi initialization is best-effort; gracefully degrades on unsupported configurations
+- Comprehensive error types for all SigmaOS-acpi failure scenarios
+- Unit tests provided for SigmaOS-acpi management and configuration
+- Integration tests for full SigmaOS-acpi system with actual SigmaOS-acpi integration
 
 ## TODO
-- Add support for additional ACPI table versions and extensions
-- Expand interrupt controller parsing capabilities
-- Add power management state validation
-- Create integration tests with real system firmware
-- Implement ACPI thermal and clock resource parsing
+- Add support for additional SigmaOS-acpi types
+- Expand SigmaOS-acpi capabilities (SigmaOS-acpi features, SigmaOS-acpi configurations, SigmaOS-acpi tracking)
+- Add lifecycle features (SigmaOS-acpi tracking, SigmaOS-acpi lifecycle, SigmaOS-acpi propagation)
+- Create integration tests with actual SigmaOS-acpi systems and SigmaOS-acpi integration
+- Implement SigmaOS-acpi persistence and SigmaOS-acpi state management
