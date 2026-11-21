@@ -3,6 +3,9 @@
 //! Real implementation: power states, events, and validation.
 //! Replaces the 104-line CLI placeholder.
 
+/// ACPI power management manager (events, batteries, thermal zones).
+pub mod sigmaacpi;
+
 use std::collections::BTreeMap;
 use std::fmt;
 
